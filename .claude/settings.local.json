@@ -1,0 +1,16 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm create vite@latest . -- --template vanilla)",
+      "Bash(npm install)",
+      "Bash(npm show vite-plugin-cesium versions --json)",
+      "mcp__Claude_Preview__preview_start",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\" \"https://celestrak.org/pub/TLE/stations.txt\" -H \"User-Agent: Mozilla/5.0\")",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\" \"https://celestrak.org/SOCRATES/query.php?CATNR=25544&FORMAT=TLE\" -H \"User-Agent: Mozilla/5.0\")",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\" \"https://celestrak.org/pub/TLE/catalog.txt\" -H \"User-Agent: Mozilla/5.0\")",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\" \"https://celestrak.org/pub/TLE/\" -H \"User-Agent: Mozilla/5.0\")",
+      "Bash(node -e \"const p = require\\(''/Users/luancarneiro/Library/CloudStorage/GoogleDrive-luan@velodigital.com.br/My\\\\ Drive/Design\\\\ Lab/Claude\\\\ testing/satelite-tracker/node_modules/cesium/package.json''\\); console.log\\(p.version\\)\")",
+      "Bash(gh auth:*)"
+    ]
+  }
+}

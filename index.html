@@ -1,0 +1,150 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Satellite Tracker</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=DM+Sans:wght@300;400;500&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/src/style.css" />
+</head>
+<body>
+  <div id="app">
+    <!-- Header -->
+    <header id="header">
+      <div id="logo">
+        <span class="logo-icon">◎</span>
+        <span class="logo-text">ORBITAL</span>
+      </div>
+
+      <nav id="filters">
+        <button class="filter-btn active" data-category="stations">
+          <span class="filter-dot" style="--dot-color: var(--col-stations)"></span>
+          Estações
+        </button>
+        <button class="filter-btn" data-category="starlink">
+          <span class="filter-dot" style="--dot-color: var(--col-starlink)"></span>
+          Starlink
+        </button>
+        <button class="filter-btn" data-category="gps">
+          <span class="filter-dot" style="--dot-color: var(--col-gps)"></span>
+          GPS
+        </button>
+        <button class="filter-btn" data-category="weather">
+          <span class="filter-dot" style="--dot-color: var(--col-weather)"></span>
+          Meteorológicos
+        </button>
+        <button class="filter-btn" data-category="science">
+          <span class="filter-dot" style="--dot-color: var(--col-science)"></span>
+          Científicos
+        </button>
+        <button class="filter-btn" data-category="military">
+          <span class="filter-dot" style="--dot-color: var(--col-military)"></span>
+          Militares
+        </button>
+      </nav>
+
+      <div id="header-right">
+        <div id="sat-counter">
+          <span id="sat-count">0</span>
+          <span class="counter-label">satélites</span>
+        </div>
+        <div id="clock">
+          <span id="clock-time">--:--:--</span>
+          <span id="clock-date">--/--/----</span>
+        </div>
+      </div>
+    </header>
+
+    <!-- Main area -->
+    <main id="main">
+      <!-- Left Panel: selected satellite info -->
+      <aside id="panel-left" class="glass-panel">
+        <div class="panel-header">
+          <span class="panel-title">SATÉLITE</span>
+        </div>
+        <div id="sat-info" class="panel-empty">
+          <span class="empty-icon">◎</span>
+          <p>Clique em um satélite para ver os detalhes</p>
+        </div>
+        <div id="sat-details" class="hidden">
+          <div class="sat-name-row">
+            <span id="sat-name" class="sat-name">—</span>
+            <span id="sat-norad" class="sat-norad">NORAD #—</span>
+          </div>
+          <div class="stat-grid">
+            <div class="stat-item">
+              <span class="stat-label">ALTITUDE</span>
+              <span id="stat-alt" class="stat-value">— <small>km</small></span>
+            </div>
+            <div class="stat-item">
+              <span class="stat-label">VELOCIDADE</span>
+              <span id="stat-vel" class="stat-value">— <small>km/s</small></span>
+            </div>
+            <div class="stat-item">
+              <span class="stat-label">INCLINAÇÃO</span>
+              <span id="stat-inc" class="stat-value">—<small>°</small></span>
+            </div>
+            <div class="stat-item">
+              <span class="stat-label">PERÍODO</span>
+              <span id="stat-per" class="stat-value">— <small>min</small></span>
+            </div>
+          </div>
+          <div id="next-pass-section" class="hidden">
+            <div class="panel-divider"></div>
+            <span class="stat-label">PRÓX. PASSAGEM</span>
+            <span id="next-pass-time" class="next-pass-value">—</span>
+          </div>
+        </div>
+      </aside>
+
+      <!-- Globe container -->
+      <div id="cesium-container"></div>
+
+      <!-- Right Panel: location passes + timeline -->
+      <aside id="panel-right" class="glass-panel">
+        <div class="panel-header">
+          <span class="panel-title">PASSAGENS</span>
+        </div>
+        <div id="passes-info" class="panel-empty">
+          <span class="empty-icon">⊕</span>
+          <p>Clique no globo para ver passagens sobre essa localização</p>
+        </div>
+        <div id="passes-list" class="hidden"></div>
+
+        <div class="panel-divider"></div>
+
+        <!-- Timeline controls -->
+        <div id="timeline-controls">
+          <div class="panel-header">
+            <span class="panel-title">TEMPO</span>
+          </div>
+          <div id="time-display">
+            <span id="sim-time" class="mono">—</span>
+          </div>
+          <div id="playback-controls">
+            <button id="btn-rewind" class="ctrl-btn" title="Retroceder">⏮</button>
+            <button id="btn-play" class="ctrl-btn ctrl-btn-primary" title="Play/Pause">▶</button>
+            <button id="btn-forward" class="ctrl-btn" title="Avançar">⏭</button>
+            <button id="btn-reset" class="ctrl-btn" title="Agora">⊙</button>
+          </div>
+          <div id="speed-controls">
+            <button class="speed-btn active" data-speed="1">1×</button>
+            <button class="speed-btn" data-speed="60">60×</button>
+            <button class="speed-btn" data-speed="300">300×</button>
+            <button class="speed-btn" data-speed="1000">1000×</button>
+          </div>
+          <div id="time-slider-wrap">
+            <span class="slider-label">−12h</span>
+            <input type="range" id="time-slider" min="-720" max="720" value="0" step="1" />
+            <span class="slider-label">+12h</span>
+          </div>
+        </div>
+      </aside>
+    </main>
+  </div>
+
+  <script type="module" src="/src/main.js"></script>
+</body>
+</html>
