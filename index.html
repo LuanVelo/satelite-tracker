@@ -45,6 +45,24 @@
         </button>
       </nav>
 
+      <!-- Spacer pushes country + clock to the right -->
+      <div style="flex:1"></div>
+
+      <!-- Country search -->
+      <div id="country-selector">
+        <div id="country-search-wrap">
+          <span class="country-search-icon">⊕</span>
+          <input
+            type="text"
+            id="country-input"
+            placeholder="Buscar país…"
+            autocomplete="off"
+            spellcheck="false"
+          />
+        </div>
+        <div id="country-dropdown" class="hidden"></div>
+      </div>
+
       <div id="header-right">
         <div id="sat-counter">
           <span id="sat-count">0</span>
@@ -59,20 +77,32 @@
 
     <!-- Main area -->
     <main id="main">
-      <!-- Left Panel: selected satellite info -->
-      <aside id="panel-left" class="glass-panel">
+
+      <!-- Left Panel: satellite detail (hidden until a satellite is selected) -->
+      <aside id="panel-left" class="glass-panel panel-left-hidden">
         <div class="panel-header">
           <span class="panel-title">SATÉLITE</span>
+          <div class="panel-actions">
+            <button id="btn-close-left" class="btn-close" title="Fechar">✕</button>
+          </div>
         </div>
-        <div id="sat-info" class="panel-empty">
-          <span class="empty-icon">◎</span>
-          <p>Clique em um satélite para ver os detalhes</p>
+
+        <!-- Satellite image -->
+        <div id="sat-image-wrap">
+          <img id="sat-image" src="" alt="" />
+          <div id="sat-image-placeholder">
+            <span class="sat-image-icon">◎</span>
+          </div>
         </div>
+
+        <!-- Detail content -->
         <div id="sat-details" class="hidden">
           <div class="sat-name-row">
             <span id="sat-name" class="sat-name">—</span>
             <span id="sat-norad" class="sat-norad">NORAD #—</span>
           </div>
+
+          <!-- Primary stats -->
           <div class="stat-grid">
             <div class="stat-item">
               <span class="stat-label">ALTITUDE</span>
@@ -91,10 +121,67 @@
               <span id="stat-per" class="stat-value">— <small>min</small></span>
             </div>
           </div>
-          <div id="next-pass-section" class="hidden">
-            <div class="panel-divider"></div>
-            <span class="stat-label">PRÓX. PASSAGEM</span>
-            <span id="next-pass-time" class="next-pass-value">—</span>
+
+          <div class="panel-divider"></div>
+
+          <!-- Extended orbital data -->
+          <div class="stat-section-title">ELEMENTOS ORBITAIS</div>
+          <div class="stat-list">
+            <div class="stat-row">
+              <span class="stat-row-label">Semi-eixo maior</span>
+              <span id="stat-sma" class="stat-row-value">—</span>
+            </div>
+            <div class="stat-row">
+              <span class="stat-row-label">Excentricidade</span>
+              <span id="stat-ecc" class="stat-row-value">—</span>
+            </div>
+            <div class="stat-row">
+              <span class="stat-row-label">RAAN</span>
+              <span id="stat-raan" class="stat-row-value">—</span>
+            </div>
+            <div class="stat-row">
+              <span class="stat-row-label">Arg. perígeo</span>
+              <span id="stat-arg" class="stat-row-value">—</span>
+            </div>
+            <div class="stat-row">
+              <span class="stat-row-label">Anomalia média</span>
+              <span id="stat-ma" class="stat-row-value">—</span>
+            </div>
+            <div class="stat-row">
+              <span class="stat-row-label">Perígeo</span>
+              <span id="stat-peri" class="stat-row-value">—</span>
+            </div>
+            <div class="stat-row">
+              <span class="stat-row-label">Apógeo</span>
+              <span id="stat-apo" class="stat-row-value">—</span>
+            </div>
+          </div>
+
+          <div class="panel-divider"></div>
+
+          <!-- TLE metadata -->
+          <div class="stat-section-title">METADADOS</div>
+          <div class="stat-list">
+            <div class="stat-row">
+              <span class="stat-row-label">Classe</span>
+              <span id="stat-class" class="stat-row-value">—</span>
+            </div>
+            <div class="stat-row">
+              <span class="stat-row-label">Designador Intl.</span>
+              <span id="stat-intl" class="stat-row-value">—</span>
+            </div>
+            <div class="stat-row">
+              <span class="stat-row-label">Ano de lançamento</span>
+              <span id="stat-launch" class="stat-row-value">—</span>
+            </div>
+            <div class="stat-row">
+              <span class="stat-row-label">Época TLE</span>
+              <span id="stat-epoch" class="stat-row-value">—</span>
+            </div>
+            <div class="stat-row">
+              <span class="stat-row-label">Rev. no epoch</span>
+              <span id="stat-rev" class="stat-row-value">—</span>
+            </div>
           </div>
         </div>
       </aside>
@@ -102,46 +189,94 @@
       <!-- Globe container -->
       <div id="cesium-container"></div>
 
-      <!-- Right Panel: location passes + timeline -->
-      <aside id="panel-right" class="glass-panel">
-        <div class="panel-header">
-          <span class="panel-title">PASSAGENS</span>
-        </div>
-        <div id="passes-info" class="panel-empty">
-          <span class="empty-icon">⊕</span>
-          <p>Clique no globo para ver passagens sobre essa localização</p>
-        </div>
-        <div id="passes-list" class="hidden"></div>
+      <!-- Right column: two independent collapsible panels -->
+      <div id="right-column">
 
-        <div class="panel-divider"></div>
+        <!-- Satellites panel -->
+        <aside id="panel-satellites" class="hud-panel">
+          <div class="panel-header">
+            <span class="panel-title">SATÉLITES</span>
+            <div class="panel-actions">
+              <span id="sat-list-count" class="panel-count">0</span>
+              <button class="panel-toggle-btn" data-panel="panel-satellites" title="Minimizar/Expandir">▾</button>
+            </div>
+          </div>
+          <div class="panel-body">
+            <div id="sat-list-empty" class="panel-empty">
+              <span class="empty-icon">◎</span>
+              <p>Carregando satélites…</p>
+            </div>
+            <div id="sat-list" class="hidden"></div>
+          </div>
+        </aside>
 
-        <!-- Timeline controls -->
-        <div id="timeline-controls">
+        <!-- Timeline panel -->
+        <aside id="panel-timeline" class="hud-panel">
           <div class="panel-header">
             <span class="panel-title">TEMPO</span>
+            <div class="panel-actions">
+              <button class="panel-toggle-btn" data-panel="panel-timeline" title="Minimizar/Expandir">▾</button>
+            </div>
           </div>
-          <div id="time-display">
-            <span id="sim-time" class="mono">—</span>
+          <div class="panel-body">
+            <div id="timeline-controls">
+              <div id="time-display">
+                <span id="sim-time" class="mono">—</span>
+              </div>
+              <div id="playback-controls">
+                <button id="btn-rewind" class="ctrl-btn" title="Retroceder">⏮</button>
+                <button id="btn-play" class="ctrl-btn ctrl-btn-primary" title="Play/Pause">▶</button>
+                <button id="btn-forward" class="ctrl-btn" title="Avançar">⏭</button>
+                <button id="btn-reset" class="ctrl-btn" title="Agora">⊙</button>
+              </div>
+              <div id="speed-controls">
+                <button class="speed-btn active" data-speed="1">1×</button>
+                <button class="speed-btn" data-speed="60">60×</button>
+                <button class="speed-btn" data-speed="300">300×</button>
+                <button class="speed-btn" data-speed="1000">1000×</button>
+              </div>
+              <div id="time-slider-wrap">
+                <span class="slider-label">−12h</span>
+                <input type="range" id="time-slider" min="-720" max="720" value="0" step="1" />
+                <span class="slider-label">+12h</span>
+              </div>
+            </div>
           </div>
-          <div id="playback-controls">
-            <button id="btn-rewind" class="ctrl-btn" title="Retroceder">⏮</button>
-            <button id="btn-play" class="ctrl-btn ctrl-btn-primary" title="Play/Pause">▶</button>
-            <button id="btn-forward" class="ctrl-btn" title="Avançar">⏭</button>
-            <button id="btn-reset" class="ctrl-btn" title="Agora">⊙</button>
+        </aside>
+
+      </div>
+      <!-- Country Intel Panel (bottom-left, above Rotas) -->
+      <div id="country-intel" class="hidden">
+        <span class="ic-corner ic-tl"></span>
+        <span class="ic-corner ic-tr"></span>
+        <span class="ic-corner ic-bl"></span>
+        <span class="ic-corner ic-br"></span>
+        <svg class="ic-bg" viewBox="0 0 254 180" preserveAspectRatio="xMidYMid slice">
+          <circle cx="127" cy="90" r="32" fill="none" stroke="rgba(255,255,255,0.07)" stroke-width="0.7"/>
+          <circle cx="127" cy="90" r="62" fill="none" stroke="rgba(255,255,255,0.045)" stroke-width="0.7"/>
+          <circle cx="127" cy="90" r="96" fill="none" stroke="rgba(255,255,255,0.025)" stroke-width="0.7"/>
+          <line x1="0" y1="90" x2="254" y2="90" stroke="rgba(255,255,255,0.05)" stroke-width="0.5"/>
+          <line x1="127" y1="0" x2="127" y2="180" stroke="rgba(255,255,255,0.05)" stroke-width="0.5"/>
+        </svg>
+        <div class="ic-content">
+          <div class="ic-title">ANÁLISE ORBITAL</div>
+          <div id="intel-country-name" class="ic-country">—</div>
+          <div class="ic-sep"></div>
+          <div class="ic-stat">
+            <span class="ic-stat-label">SAT. SOBRE O<br>ESPAÇO AÉREO</span>
+            <span id="intel-sat-count" class="ic-stat-val">—</span>
           </div>
-          <div id="speed-controls">
-            <button class="speed-btn active" data-speed="1">1×</button>
-            <button class="speed-btn" data-speed="60">60×</button>
-            <button class="speed-btn" data-speed="300">300×</button>
-            <button class="speed-btn" data-speed="1000">1000×</button>
-          </div>
-          <div id="time-slider-wrap">
-            <span class="slider-label">−12h</span>
-            <input type="range" id="time-slider" min="-720" max="720" value="0" step="1" />
-            <span class="slider-label">+12h</span>
-          </div>
+          <div class="ic-sep"></div>
+          <div class="ic-watchers-title">NAÇÕES MONITORANDO</div>
+          <div id="intel-watchers"></div>
         </div>
-      </aside>
+      </div>
+
+      <!-- Track toggle button (bottom-left) -->
+      <button id="btn-tracks" class="track-toggle active" title="Mostrar/ocultar rotas">
+        <span class="track-toggle-icon">⟳</span>
+        <span class="track-toggle-label">Rotas</span>
+      </button>
     </main>
   </div>
 

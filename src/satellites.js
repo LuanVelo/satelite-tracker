@@ -1,18 +1,18 @@
 import * as Cesium from 'cesium'
 import * as satellite from 'satellite.js'
 
-// TLE API — CORS-friendly, returns fresh TLEs as JSON
-const TLE_API = 'https://tle.ivanstanojevic.me/api/tle/'
+// In dev: use Vite proxy to bypass browser sandbox. In prod: call API directly (CORS is open).
+const TLE_API = import.meta.env.DEV
+  ? '/tleapi/api/tle/'
+  : 'https://tle.ivanstanojevic.me/api/tle/'
 
-// Search terms and NORAD IDs per category
 const CATEGORY_CONFIG = {
-  stations: { search: 'ISS',      size: 10  },
+  stations: { search: 'ISS',      size: 100 },
   starlink:  { search: 'STARLINK', size: 100 },
-  gps:       { search: 'GPS',      size: 50  },
-  weather:   { search: 'NOAA',     size: 30  },
-  science:   { search: 'HUBBLE',   size: 20  },
-  // Publicly tracked military/government satellites (unclassified TLEs only)
-  military:  { search: 'COSMOS',   size: 80  },
+  gps:       { search: 'GPS',      size: 100 },
+  weather:   { search: 'NOAA',     size: 100 },
+  science:   { search: 'SENTINEL', size: 100 },
+  military:  { search: 'COSMOS',   size: 100 },
 }
 
 const CATEGORY_COLORS = {
@@ -24,27 +24,35 @@ const CATEGORY_COLORS = {
   military:  Cesium.Color.fromCssColorString('#ff4444'),
 }
 
-const CACHE_TTL = 30 * 60 * 1000 // 30 min
+export const CATEGORY_CSS_COLORS = {
+  stations: '#69f0ae',
+  starlink:  '#4fc3f7',
+  gps:       '#ffeb3b',
+  weather:   '#ce93d8',
+  science:   '#ffab40',
+  military:  '#ff4444',
+}
 
+const CACHE_TTL      = 30 * 60 * 1000
 const MAX_SATELLITES = 500
-
-// Track rendering config
-const TRACK_STEPS    = 120          // 2h @ 60s steps
+const TRACK_STEPS    = 120
 const TRACK_STEP_SEC = 60
 
-// Module state
-let _pointCollection = null
-let _trackPrimitives = []           // Cesium.Polyline primitives for tracks
+// ── Multi-category state ───────────────────────────────────────
+// Map<category, { pointCollection, sats, entries: [{point,sat,idx}], color, cssColor }>
+const _cats = new Map()
+
 let _clickHandler    = null
 let _tickHandler     = null
-let _trackAbort      = false        // cancel in-progress track computation
+let _trackAbort      = false
+let _trackPrimitives = []
+let _tracksVisible   = true
+let _viewer          = null
+let _onSelect        = null
 
-export let currentSatData = []
-
-// ── Fetch ─────────────────────────────────────────────────────
-
+// ── Fetch ──────────────────────────────────────────────────────
 async function fetchCategory(category) {
-  const cacheKey = `tle_v2_${category}`
+  const cacheKey = `tle_v4_${category}`
   const cached = localStorage.getItem(cacheKey)
   if (cached) {
     const { data, ts } = JSON.parse(cached)
@@ -58,13 +66,14 @@ async function fetchCategory(category) {
 
   const json = await res.json()
   const data = json.member ?? []
-
-  localStorage.setItem(cacheKey, JSON.stringify({ data, ts: Date.now() }))
+  // Only cache non-empty results to avoid persisting transient failures
+  if (data.length > 0) {
+    localStorage.setItem(cacheKey, JSON.stringify({ data, ts: Date.now() }))
+  }
   return data
 }
 
-// ── Parse ─────────────────────────────────────────────────────
-
+// ── Parse ──────────────────────────────────────────────────────
 function buildSatRecords(members) {
   const sats = []
   for (const m of members) {
@@ -73,15 +82,12 @@ function buildSatRecords(members) {
       const satrec = satellite.twoline2satrec(m.line1, m.line2)
       if (satrec.error !== 0) continue
       sats.push({ name: m.name, tle1: m.line1, tle2: m.line2, satrec })
-    } catch {
-      // skip malformed TLE
-    }
+    } catch { }
   }
   return sats.slice(0, MAX_SATELLITES)
 }
 
-// ── Propagation ───────────────────────────────────────────────
-
+// ── Propagation ────────────────────────────────────────────────
 export function getPosition(satrec, date) {
   const posVel = satellite.propagate(satrec, date)
   if (!posVel || !posVel.position) return null
@@ -92,131 +98,248 @@ export function getPosition(satrec, date) {
   return {
     lon:      satellite.degreesLong(geo.longitude),
     lat:      satellite.degreesLat(geo.latitude),
-    alt:      geo.height,   // km above WGS84
+    alt:      geo.height,
     velocity: posVel.velocity,
     position: posVel.position,
   }
 }
 
-// ── Main: load category ───────────────────────────────────────
+// ── TLE extended ───────────────────────────────────────────────
+export function parseTLEExtended(tle1, tle2) {
+  const noradId        = tle1.slice(2, 7).trim()
+  const classification = tle1[7]?.trim() || 'U'
+  const intlDesig      = tle1.slice(9, 17).trim()
 
-export async function loadSatellites(viewer, category, onSelect) {
-  clearSatellites(viewer)
+  const launchYr2  = parseInt(intlDesig.slice(0, 2)) || 0
+  const launchYear = launchYr2 >= 57 ? 1900 + launchYr2 : 2000 + launchYr2
+
+  const epochRaw  = tle1.slice(18, 32).trim()
+  const epochYr2  = parseInt(epochRaw.slice(0, 2))
+  const epochDay  = parseFloat(epochRaw.slice(2))
+  const epochYear = epochYr2 >= 57 ? 1900 + epochYr2 : 2000 + epochYr2
+  const epochDate = new Date(Date.UTC(epochYear, 0, 1))
+  epochDate.setUTCDate(epochDate.getUTCDate() + Math.floor(epochDay) - 1)
+
+  const inclination  = parseFloat(tle2.slice(8, 16))
+  const raan         = parseFloat(tle2.slice(17, 25))
+  const eccStr       = tle2.slice(26, 33)
+  const eccentricity = parseFloat('0.' + eccStr)
+  const argPerigee   = parseFloat(tle2.slice(34, 42))
+  const meanAnomaly  = parseFloat(tle2.slice(43, 51))
+  const meanMotion   = parseFloat(tle2.slice(52, 63))
+  const revNumber    = parseInt(tle2.slice(63, 68)) || 0
+
+  const period        = meanMotion > 0 ? 1440 / meanMotion : 0
+  const mu            = 398600.4418
+  const n             = meanMotion * 2 * Math.PI / 86400
+  const semiMajorAxis = Math.pow(mu / (n * n), 1 / 3)
+  const earthRadius   = 6371
+  const perigee = semiMajorAxis * (1 - eccentricity) - earthRadius
+  const apogee  = semiMajorAxis * (1 + eccentricity) - earthRadius
+
+  const classMap = { U: 'Não classificado', C: 'Classificado', S: 'Secreto' }
+
+  return {
+    noradId, inclination, raan, eccentricity, argPerigee,
+    meanAnomaly, meanMotion, revNumber, period,
+    semiMajorAxis, perigee, apogee,
+    classification: classMap[classification] ?? classification,
+    intlDesig, launchYear, epochDate,
+  }
+}
+
+// ── Shared handlers ────────────────────────────────────────────
+function rebuildTickHandler(viewer) {
+  if (_tickHandler) viewer.clock.onTick.removeEventListener(_tickHandler)
+
+  _tickHandler = (clock) => {
+    const date = Cesium.JulianDate.toDate(clock.currentTime)
+    for (const { entries } of _cats.values()) {
+      for (const { point, sat } of entries) {
+        const pos = getPosition(sat.satrec, date)
+        if (!pos) continue
+        point.position = Cesium.Cartesian3.fromDegrees(pos.lon, pos.lat, pos.alt * 1000)
+      }
+    }
+  }
+  viewer.clock.onTick.addEventListener(_tickHandler)
+}
+
+function rebuildClickHandler(viewer) {
+  if (_clickHandler && !_clickHandler.isDestroyed()) _clickHandler.destroy()
+
+  _clickHandler = new Cesium.ScreenSpaceEventHandler(viewer.scene.canvas)
+  _clickHandler.setInputAction((e) => {
+    const picks = viewer.scene.drillPick(e.position, 10, 8, 8)
+    for (const pick of picks) {
+      if (pick?.id && typeof pick.id === 'object' && pick.id.cat !== undefined) {
+        const { cat, idx } = pick.id
+        const catState = _cats.get(cat)
+        if (catState && _onSelect) {
+          triggerSelect(viewer, catState.sats[idx], idx, cat, _onSelect)
+          return
+        }
+      }
+    }
+  }, Cesium.ScreenSpaceEventType.LEFT_CLICK)
+}
+
+// ── Add / Remove category ──────────────────────────────────────
+export async function addCategory(viewer, category, onSelect, onListReady) {
+  if (_cats.has(category)) return
+
+  _viewer   = viewer
+  _onSelect = onSelect
 
   const members = await fetchCategory(category)
   const sats    = buildSatRecords(members)
-  currentSatData = sats
+  const color    = CATEGORY_COLORS[category] ?? Cesium.Color.WHITE
+  const cssColor = CATEGORY_CSS_COLORS[category] ?? '#4fc3f7'
 
-  const color = CATEGORY_COLORS[category] ?? Cesium.Color.WHITE
-
-  // PointPrimitiveCollection is faster than Entity-based points
-  _pointCollection = viewer.scene.primitives.add(new Cesium.PointPrimitiveCollection())
-
-  const entries = [] // { point, sat }
+  const pointCollection = viewer.scene.primitives.add(new Cesium.PointPrimitiveCollection())
+  const entries = []
   const now = new Date()
 
   for (let i = 0; i < sats.length; i++) {
     const pos = getPosition(sats[i].satrec, now)
     if (!pos) continue
-
-    const point = _pointCollection.add({
+    const point = pointCollection.add({
       position:     Cesium.Cartesian3.fromDegrees(pos.lon, pos.lat, pos.alt * 1000),
       pixelSize:    5,
       color:        color,
       outlineColor: color.withAlpha(0.35),
       outlineWidth: 5,
-      id: i,
+      id: { cat: category, idx: i },
     })
-    entries.push({ point, sat: sats[i] })
+    entries.push({ point, sat: sats[i], idx: i })
   }
 
-  // Real-time position update on every clock tick
-  _tickHandler = (clock) => {
-    const date = Cesium.JulianDate.toDate(clock.currentTime)
-    for (const { point, sat } of entries) {
-      const pos = getPosition(sat.satrec, date)
-      if (!pos) continue
-      point.position = Cesium.Cartesian3.fromDegrees(pos.lon, pos.lat, pos.alt * 1000)
-    }
-  }
-  viewer.clock.onTick.addEventListener(_tickHandler)
+  _cats.set(category, { pointCollection, sats, entries, color, cssColor })
 
-  // Click to select satellite
-  // Uses drillPick to pass through track polylines and find the point primitive
-  _clickHandler = new Cesium.ScreenSpaceEventHandler(viewer.scene.canvas)
-  _clickHandler.setInputAction((e) => {
-    // drillPick goes through all overlapping picks — finds our point even under track lines
-    const picks = viewer.scene.drillPick(e.position, 10, 8, 8)
+  rebuildTickHandler(viewer)
+  rebuildClickHandler(viewer)
 
-    // picked.primitive is the PointPrimitive itself (not the collection)
-    // our satellite points have numeric ids; entity/polyline picks have object ids
-    let idx = undefined
-    for (const pick of picks) {
-      if (pick && typeof pick.id === 'number') {
-        idx = pick.id
-        break
-      }
-    }
-    if (idx === undefined) return
+  if (onListReady) onListReady()
 
-    const sat = sats[idx]
-    if (!sat) return
-
-    const pos = getPosition(sat.satrec, Cesium.JulianDate.toDate(viewer.clock.currentTime))
-    if (!pos) return
-
-    const speed = pos.velocity
-      ? Math.sqrt(pos.velocity.x ** 2 + pos.velocity.y ** 2 + pos.velocity.z ** 2)
-      : 0
-
-    const noradId     = sat.tle1.slice(2, 7).trim()
-    const inclination = parseFloat(sat.tle2.slice(8, 16))
-    const meanMotion  = parseFloat(sat.tle2.slice(52, 63))
-    const period      = meanMotion > 0 ? 1440 / meanMotion : 0
-
-    onSelect({ name: sat.name, noradId, altitude: pos.alt, velocity: speed, inclination, period })
-  }, Cesium.ScreenSpaceEventType.LEFT_CLICK)
-
-  // Draw orbital tracks (non-blocking)
-  drawTracks(viewer, sats, color)
-
-  return sats
+  redrawAllTracks(viewer)
 }
 
-// ── Orbital tracks ────────────────────────────────────────────
+export function removeCategory(viewer, category) {
+  const catState = _cats.get(category)
+  if (!catState) return
 
-/**
- * Compute and draw 2h orbital tracks for all satellites in batches.
- * Uses yield-to-browser (setTimeout 0) to avoid blocking the UI thread.
- */
-export function drawTracks(viewer, sats, color) {
-  _trackAbort = false
+  if (catState.pointCollection && !catState.pointCollection.isDestroyed()) {
+    viewer.scene.primitives.remove(catState.pointCollection)
+  }
+  _cats.delete(category)
+
+  if (_cats.size > 0) {
+    rebuildTickHandler(viewer)
+    rebuildClickHandler(viewer)
+    redrawAllTracks(viewer)
+  } else {
+    if (_tickHandler) {
+      viewer.clock.onTick.removeEventListener(_tickHandler)
+      _tickHandler = null
+    }
+    if (_clickHandler && !_clickHandler.isDestroyed()) {
+      _clickHandler.destroy()
+      _clickHandler = null
+    }
+    clearTracks(viewer)
+  }
+}
+
+export function clearAllCategories(viewer) {
+  _trackAbort = true
+  for (const catState of _cats.values()) {
+    if (catState.pointCollection && !catState.pointCollection.isDestroyed()) {
+      viewer.scene.primitives.remove(catState.pointCollection)
+    }
+  }
+  _cats.clear()
+  if (_tickHandler) { viewer.clock.onTick.removeEventListener(_tickHandler); _tickHandler = null }
+  if (_clickHandler && !_clickHandler.isDestroyed()) { _clickHandler.destroy(); _clickHandler = null }
   clearTracks(viewer)
+}
 
+// ── Query active satellites ────────────────────────────────────
+export function getAllSatEntries() {
+  const result = []
+  for (const [category, { sats, cssColor }] of _cats.entries()) {
+    for (let i = 0; i < sats.length; i++) {
+      result.push({ sat: sats[i], category, localIdx: i, cssColor })
+    }
+  }
+  return result
+}
+
+export function getSatelliteCount() {
+  let total = 0
+  for (const { sats } of _cats.values()) total += sats.length
+  return total
+}
+
+// ── Programmatic select ────────────────────────────────────────
+export function selectSatelliteByIndex(viewer, category, localIdx, onSelect) {
+  const catState = _cats.get(category)
+  const sat = catState?.sats[localIdx]
+  if (!sat) return
+  triggerSelect(viewer, sat, localIdx, category, onSelect)
+}
+
+function triggerSelect(viewer, sat, idx, category, onSelect) {
+  const pos = getPosition(sat.satrec, Cesium.JulianDate.toDate(viewer.clock.currentTime))
+  if (!pos) return
+
+  const speed = pos.velocity
+    ? Math.sqrt(pos.velocity.x ** 2 + pos.velocity.y ** 2 + pos.velocity.z ** 2)
+    : 0
+
+  const extended = parseTLEExtended(sat.tle1, sat.tle2)
+  onSelect({
+    name: sat.name, tle1: sat.tle1, tle2: sat.tle2,
+    altitude: pos.alt, velocity: speed,
+    listIdx: idx, category,
+    ...extended,
+  })
+}
+
+// ── Orbital tracks ─────────────────────────────────────────────
+function redrawAllTracks(viewer) {
+  _trackAbort = true
+  clearTracks(viewer)
+  if (!_tracksVisible) return
+
+  _trackAbort = false
+  const catEntries = [..._cats.entries()]
+  const tracksPerCat = Math.max(3, Math.floor(30 / Math.max(1, catEntries.length)))
+
+  for (const [, { sats, color }] of catEntries) {
+    drawTracks(viewer, sats.slice(0, tracksPerCat), color)
+  }
+}
+
+export function drawTracks(viewer, sats, color) {
   const trackColor = color.withAlpha(0.65)
   const batchSize  = 5
   let   idx        = 0
 
   function processBatch() {
     if (_trackAbort) return
-
     const end = Math.min(idx + batchSize, sats.length)
     const now = new Date()
 
     for (let i = idx; i < end; i++) {
-      const segments = [[]]   // array of position-arrays, one per segment
-      let   prevLon  = null
+      const segments = [[]]
+      let prevLon = null
 
       for (let s = 0; s <= TRACK_STEPS; s++) {
         const date = new Date(now.getTime() + s * TRACK_STEP_SEC * 1000)
         const pos  = getPosition(sats[i].satrec, date)
         if (!pos) continue
 
-        // New segment when longitude wraps (avoids lines crossing the globe)
-        const seg = segments[segments.length - 1]
-        if (prevLon !== null && Math.abs(pos.lon - prevLon) > 120) {
-          segments.push([])
-        }
+        if (prevLon !== null && Math.abs(pos.lon - prevLon) > 120) segments.push([])
         segments[segments.length - 1].push(
           Cesium.Cartesian3.fromDegrees(pos.lon, pos.lat, pos.alt * 1000)
         )
@@ -227,13 +350,14 @@ export function drawTracks(viewer, sats, color) {
         if (seg.length < 3) continue
         const entity = viewer.entities.add({
           polyline: {
-            positions:         seg,
-            width:             2,
-            material:          new Cesium.ColorMaterialProperty(trackColor),
-            arcType:           Cesium.ArcType.NONE,
-            clampToGround:     false,
+            positions:     seg,
+            width:         2,
+            material:      new Cesium.ColorMaterialProperty(trackColor),
+            arcType:       Cesium.ArcType.NONE,
+            clampToGround: false,
           }
         })
+        entity.show = _tracksVisible
         _trackPrimitives.push(entity)
       }
     }
@@ -246,32 +370,19 @@ export function drawTracks(viewer, sats, color) {
 }
 
 function clearTracks(viewer) {
-  for (const e of _trackPrimitives) {
-    viewer.entities.remove(e)
-  }
+  for (const e of _trackPrimitives) viewer.entities.remove(e)
   _trackPrimitives = []
 }
 
-// ── Cleanup ───────────────────────────────────────────────────
-
-export function clearSatellites(viewer) {
-  _trackAbort = true
-  if (_tickHandler) {
-    viewer.clock.onTick.removeEventListener(_tickHandler)
-    _tickHandler = null
+export function setTracksVisible(visible) {
+  _tracksVisible = visible
+  if (visible && _viewer && _cats.size > 0 && _trackPrimitives.length === 0) {
+    redrawAllTracks(_viewer)
+  } else {
+    for (const e of _trackPrimitives) e.show = visible
   }
-  if (_pointCollection && !_pointCollection.isDestroyed()) {
-    viewer.scene.primitives.remove(_pointCollection)
-    _pointCollection = null
-  }
-  if (_clickHandler && !_clickHandler.isDestroyed()) {
-    _clickHandler.destroy()
-    _clickHandler = null
-  }
-  clearTracks(viewer)
-  currentSatData = []
 }
 
-export function getSatelliteCount() {
-  return currentSatData.length
+export function getTracksVisible() {
+  return _tracksVisible
 }

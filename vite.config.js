@@ -6,6 +6,11 @@ export default defineConfig({
   plugins: [cesium()],
   server: {
     proxy: {
+      '/tleapi': {
+        target: 'https://tle.ivanstanojevic.me',
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/tleapi/, ''),
+      },
       '/celestrak': {
         target: 'https://celestrak.org',
         changeOrigin: true,
