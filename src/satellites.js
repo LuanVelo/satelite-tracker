@@ -1,10 +1,9 @@
 import * as Cesium from 'cesium'
 import * as satellite from 'satellite.js'
 
-// In dev: use Vite proxy to bypass browser sandbox. In prod: call API directly (CORS is open).
-const TLE_API = import.meta.env.DEV
-  ? '/tleapi/api/tle/'
-  : 'https://tle.ivanstanojevic.me/api/tle/'
+// API URLs — try direct first (CORS open), fall back to Vite proxy (Claude sandbox)
+const TLE_API_DIRECT = 'https://tle.ivanstanojevic.me/api/tle/'
+const TLE_API_PROXY  = '/tleapi/api/tle/'
 
 const CATEGORY_CONFIG = {
   stations: { search: 'ISS',      size: 100 },
@@ -49,6 +48,8 @@ let _trackPrimitives = []
 let _tracksVisible   = true
 let _viewer          = null
 let _onSelect        = null
+let _selectedCat     = null
+let _selectedIdx     = -1
 
 // ── Fetch ──────────────────────────────────────────────────────
 async function fetchCategory(category) {
@@ -60,13 +61,23 @@ async function fetchCategory(category) {
   }
 
   const cfg = CATEGORY_CONFIG[category] ?? { search: category, size: 50 }
-  const url = `${TLE_API}?search=${encodeURIComponent(cfg.search)}&page-size=${cfg.size}&sort=popularity&sort-dir=desc`
-  const res = await fetch(url)
-  if (!res.ok) throw new Error(`TLE API error ${res.status}`)
+  const params = `?search=${encodeURIComponent(cfg.search)}&page-size=${cfg.size}&sort=popularity&sort-dir=desc`
 
-  const json = await res.json()
-  const data = json.member ?? []
-  // Only cache non-empty results to avoid persisting transient failures
+  // Try direct URL first (works in real browsers — CORS is open on this API).
+  // Fall back to Vite proxy for sandboxed environments (Claude preview).
+  let data = null
+  for (const base of [TLE_API_DIRECT, TLE_API_PROXY]) {
+    try {
+      const res = await fetch(base + params)
+      if (!res.ok) continue
+      const json = await res.json()
+      data = json.member ?? []
+      break
+    } catch { /* try next */ }
+  }
+
+  if (data === null) throw new Error('TLE API unreachable')
+
   if (data.length > 0) {
     localStorage.setItem(cacheKey, JSON.stringify({ data, ts: Date.now() }))
   }
@@ -148,6 +159,142 @@ export function parseTLEExtended(tle1, tle2) {
   }
 }
 
+// ── HUD reticle + label overlay ───────────────────────────────
+let _reticleEl  = null
+let _labelEl    = null
+let _reticleRaf = null
+let _reticleSat = null  // { satrec } — computed from TLE each frame, no entry dependency
+
+function createReticle(cssColor, satName, noradId) {
+  removeReticle()
+
+  const el = document.createElement('div')
+  el.className   = 'sat-hud-reticle'
+  el.style.color = cssColor
+  document.body.appendChild(el)
+  _reticleEl = el
+
+  const label = document.createElement('div')
+  label.className   = 'sat-hud-label'
+  label.style.color = cssColor
+  label.innerHTML   = `
+    <span class="sat-hud-label-name">${satName}</span>
+    <span class="sat-hud-label-norad">NORAD #${noradId}</span>`
+  document.body.appendChild(label)
+  _labelEl = label
+}
+
+function startReticleLoop(viewer) {
+  if (_reticleRaf) cancelAnimationFrame(_reticleRaf)
+
+  function positionElements(sx, sy) {
+    _reticleEl.style.left    = `${sx}px`
+    _reticleEl.style.top     = `${sy}px`
+    _reticleEl.style.display = 'block'
+
+    if (_labelEl) {
+      const M = 8, LW = 160, LH = 36, GAP = 18
+      const above  = sy - LH - GAP > M
+      const labelY = above ? sy - LH - GAP : sy + GAP
+      const clampX = Math.max(M, Math.min(window.innerWidth - LW - M, sx - LW / 2))
+      _labelEl.style.left    = `${clampX}px`
+      _labelEl.style.top     = `${labelY}px`
+      _labelEl.style.display = 'block'
+    }
+  }
+
+  function hide() {
+    _reticleEl.style.display = 'none'
+    if (_labelEl) _labelEl.style.display = 'none'
+  }
+
+  function loop() {
+    if (!_reticleEl || !_reticleSat) return
+    try {
+      // Compute current position from TLE (same as the tick handler)
+      const now = _viewer
+        ? Cesium.JulianDate.toDate(_viewer.clock.currentTime)
+        : new Date()
+      const geo = getPosition(_reticleSat.satrec, now)
+      if (!geo) { hide(); _reticleRaf = requestAnimationFrame(loop); return }
+
+      const cartesian = Cesium.Cartesian3.fromDegrees(geo.lon, geo.lat, geo.alt * 1000)
+      const screenPos = Cesium.SceneTransforms.worldToWindowCoordinates(viewer.scene, cartesian)
+
+      if (screenPos) positionElements(screenPos.x, screenPos.y)
+      else hide()
+    } catch { hide() }
+    _reticleRaf = requestAnimationFrame(loop)
+  }
+  _reticleRaf = requestAnimationFrame(loop)
+}
+
+function removeReticle() {
+  if (_reticleRaf) { cancelAnimationFrame(_reticleRaf); _reticleRaf = null }
+  if (_reticleEl)  { _reticleEl.remove(); _reticleEl = null }
+  if (_labelEl)    { _labelEl.remove();   _labelEl = null }
+  _reticleSat = null
+}
+
+// ── Selection state ────────────────────────────────────────────
+function setSelectionState(cat, idx) {
+  _selectedCat = cat
+  _selectedIdx = idx
+
+  const hasSelection = cat !== null
+
+  for (const [catKey, { entries, color }] of _cats.entries()) {
+    for (const { point, idx: pointIdx } of entries) {
+      const isThisOne = hasSelection && catKey === cat && pointIdx === idx
+
+      if (!hasSelection) {
+        // Nothing selected — restore all to default
+        point.color        = new Cesium.Color(color.red, color.green, color.blue, 1.0)
+        point.outlineColor = new Cesium.Color(color.red, color.green, color.blue, 0.35)
+      } else if (isThisOne) {
+        // This is the selected point — full color, no outline (reticle takes over)
+        point.color        = new Cesium.Color(color.red, color.green, color.blue, 1.0)
+        point.outlineColor = new Cesium.Color(color.red, color.green, color.blue, 0.0)
+      } else {
+        // Not selected — dim
+        point.color        = new Cesium.Color(color.red, color.green, color.blue, 0.4)
+        point.outlineColor = new Cesium.Color(color.red, color.green, color.blue, 0.08)
+      }
+    }
+  }
+
+  // Manage reticle — uses sat TLE directly, no entry/point dependency
+  if (!hasSelection) {
+    removeReticle()
+  } else {
+    const catState = _cats.get(cat)
+    if (catState) {
+      const sat = catState.sats[idx]
+      if (sat) {
+        const noradId = sat.tle1?.slice(2, 7).trim() ?? '—'
+        createReticle(catState.cssColor, sat.name, noradId) // calls removeReticle() internally
+        _reticleSat = sat  // set AFTER createReticle so removeReticle() doesn't clear it
+        if (_viewer) startReticleLoop(_viewer)
+      }
+    }
+  }
+}
+
+export function clearSelection() {
+  setSelectionState(null, -1)
+}
+
+// ── Click ring animation ───────────────────────────────────────
+function playSelectAnimation(x, y, cssColor) {
+  const ring = document.createElement('div')
+  ring.className    = 'sat-select-ring'
+  ring.style.left   = `${x}px`
+  ring.style.top    = `${y}px`
+  ring.style.color  = cssColor
+  document.body.appendChild(ring)
+  setTimeout(() => ring.remove(), 750)
+}
+
 // ── Shared handlers ────────────────────────────────────────────
 function rebuildTickHandler(viewer) {
   if (_tickHandler) viewer.clock.onTick.removeEventListener(_tickHandler)
@@ -176,11 +323,18 @@ function rebuildClickHandler(viewer) {
         const { cat, idx } = pick.id
         const catState = _cats.get(cat)
         if (catState && _onSelect) {
+          setSelectionState(cat, idx)
+          // Animation at exact click position (canvas coords → fixed window coords)
+          const rect = viewer.scene.canvas.getBoundingClientRect()
+          playSelectAnimation(rect.left + e.position.x, rect.top + e.position.y, catState.cssColor)
           triggerSelect(viewer, catState.sats[idx], idx, cat, _onSelect)
           return
         }
       }
     }
+    // Clicked empty space → restore all points + close panel
+    setSelectionState(null, -1)
+    if (_onSelect) _onSelect(null)
   }, Cesium.ScreenSpaceEventType.LEFT_CLICK)
 }
 
@@ -285,6 +439,20 @@ export function selectSatelliteByIndex(viewer, category, localIdx, onSelect) {
   const catState = _cats.get(category)
   const sat = catState?.sats[localIdx]
   if (!sat) return
+
+  setSelectionState(category, localIdx)
+
+  // Animate from the point's current screen position
+  const entry = catState.entries.find(e => e.idx === localIdx)
+  if (entry) {
+    try {
+      const screenPos = Cesium.SceneTransforms.worldToWindowCoordinates(
+        viewer.scene, entry.point.position
+      )
+      if (screenPos) playSelectAnimation(screenPos.x, screenPos.y, catState.cssColor)
+    } catch { /* off-screen or not visible */ }
+  }
+
   triggerSelect(viewer, sat, localIdx, category, onSelect)
 }
 

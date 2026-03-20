@@ -86,6 +86,106 @@ body::before {
   50%       { opacity: 0; }
 }
 
+@keyframes sat-ring-expand {
+  0%   { transform: translate(-50%, -50%) scale(0);   opacity: 1; }
+  70%  { opacity: 0.6; }
+  100% { transform: translate(-50%, -50%) scale(1.2); opacity: 0; }
+}
+
+/* ── Satellite selection ring (click animation) ──────────────── */
+.sat-select-ring {
+  position: fixed;
+  width: 20px;
+  height: 20px;
+  border: 1px solid currentColor;
+  border-radius: 50%;
+  pointer-events: none;
+  z-index: 9999;
+  animation: sat-ring-expand 0.65s cubic-bezier(0.22, 0.61, 0.36, 1) forwards;
+}
+
+/* ── HUD targeting reticle (active satellite) ────────────────── */
+@keyframes sat-reticle-in {
+  0%   { opacity: 0; transform: translate(calc(-50% + 1px), calc(-50% + 1px)) scale(1.8); }
+  100% { opacity: 1; transform: translate(calc(-50% + 1px), calc(-50% + 1px)) scale(1);   }
+}
+
+.sat-hud-reticle {
+  position: fixed;
+  /* Bracket square — wide enough to surround the satellite dot (pixelSize 5 + outline 5 = 15px) */
+  width: 30px;
+  height: 30px;
+  pointer-events: none;
+  z-index: 9998;
+  /* 1px offset for that tactical HUD feel */
+  transform: translate(calc(-50% + 1px), calc(-50% + 1px));
+  animation: sat-reticle-in 0.18s ease-out forwards;
+  /* 4 corner L-brackets, 1px thick, 9px arm length */
+  background:
+    linear-gradient(currentColor, currentColor) top    left  / 9px 1px no-repeat,
+    linear-gradient(currentColor, currentColor) top    left  / 1px 9px no-repeat,
+    linear-gradient(currentColor, currentColor) top    right / 9px 1px no-repeat,
+    linear-gradient(currentColor, currentColor) top    right / 1px 9px no-repeat,
+    linear-gradient(currentColor, currentColor) bottom left  / 9px 1px no-repeat,
+    linear-gradient(currentColor, currentColor) bottom left  / 1px 9px no-repeat,
+    linear-gradient(currentColor, currentColor) bottom right / 9px 1px no-repeat,
+    linear-gradient(currentColor, currentColor) bottom right / 1px 9px no-repeat;
+}
+
+/* ── HUD satellite label ─────────────────────────────────────── */
+@keyframes sat-label-in {
+  0%   { opacity: 0; }
+  100% { opacity: 1; }
+}
+
+.sat-hud-label {
+  position: fixed;
+  pointer-events: none;
+  z-index: 9997;
+  /* Position fully controlled by JS — no transform offset here */
+  animation: sat-label-in 0.2s ease-out forwards;
+
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 1px;
+
+  /* HUD panel style */
+  background: rgba(2, 5, 9, 0.88);
+  border: 1px solid currentColor;
+  padding: 4px 8px;
+  font-family: var(--font-mono);
+  white-space: nowrap;
+}
+
+/* Bottom connector line from label to satellite point */
+.sat-hud-label::after {
+  content: '';
+  position: absolute;
+  bottom: -8px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 1px;
+  height: 7px;
+  background: currentColor;
+  opacity: 0.5;
+}
+
+.sat-hud-label-name {
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  color: currentColor;
+  text-transform: uppercase;
+}
+
+.sat-hud-label-norad {
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  opacity: 0.55;
+  color: currentColor;
+}
+
 /* ── Logo ───────────────────────────────────────────────────── */
 #logo {
   display: flex;

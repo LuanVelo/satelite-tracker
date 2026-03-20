@@ -46,6 +46,7 @@ let _activeListCat     = null
 let _activeListLocalIdx = -1
 
 export function showSatelliteInfo(data) {
+  if (!data) { closeSatellitePanel(); return }
   _activeListCat      = data.category ?? null
   _activeListLocalIdx = data.listIdx ?? -1
 

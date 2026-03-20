@@ -3,7 +3,7 @@ import './style.css'
 
 import { initGlobe }           from './globe.js'
 import { initBorders }         from './borders.js'
-import { addCategory, removeCategory, getAllSatEntries, getPosition, getSatelliteCount, selectSatelliteByIndex, setTracksVisible, getTracksVisible } from './satellites.js'
+import { addCategory, removeCategory, getAllSatEntries, getPosition, getSatelliteCount, selectSatelliteByIndex, setTracksVisible, getTracksVisible, clearSelection } from './satellites.js'
 import { initTimeline }        from './timeline.js'
 import { initFilters }         from './filters.js'
 import { initCountrySelector } from './countrySelector.js'
@@ -49,7 +49,10 @@ async function main() {
   })
 
   // Close left panel
-  document.getElementById('btn-close-left').addEventListener('click', closeSatellitePanel)
+  document.getElementById('btn-close-left').addEventListener('click', () => {
+    closeSatellitePanel()
+    clearSelection()
+  })
 
   // ── Multi-category helpers ─────────────────────────────────
 
@@ -64,6 +67,7 @@ async function main() {
   // ── Category filters (multi-select toggle) ─────────────────
   initFilters(async (category, isActive) => {
     closeSatellitePanel()
+    clearSelection()
 
     if (isActive) {
       updateCounter('…')
